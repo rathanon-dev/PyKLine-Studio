@@ -1,9 +1,35 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import socket
 import threading
 import time
 import random
+import sys
+import os
+
+# Ensure package directory is on python path
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from core.paths import get_workspace_directory, get_dumps_directory
+except ImportError:
+    def get_workspace_directory():
+        if getattr(sys, 'frozen', False):
+            base = os.path.dirname(os.path.abspath(sys.executable))
+            name = os.path.splitext(os.path.basename(sys.executable))[0]
+            ws = os.path.join(base, f"{name}_Data")
+        else:
+            ws = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(ws, exist_ok=True)
+        return ws
+
+    def get_dumps_directory():
+        ws = get_workspace_directory()
+        d = os.path.join(ws, "dumps")
+        os.makedirs(d, exist_ok=True)
+        return d
 
 PORT = 9999
 
@@ -13,12 +39,17 @@ def calc_honda_checksum(data):
 class ECU_Simulator(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("ECU Physics & Flash Simulator")
-        self.geometry("500x650")
+        self.title("PyKLine Simulator - Honda ECU Physics & Flash Emulator")
+        self.geometry("520x720")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
         self.server = None
         self.running = True
+        
+        # Flash Memory & Security Access State
+        self.var_force_lock = tk.BooleanVar(value=False)
+        self.simulated_flash_buffer = bytearray()
+        self.storage_dir = get_dumps_directory()
         
         # ECU State
         self.engine_on = tk.BooleanVar(value=False)
@@ -34,6 +65,7 @@ class ECU_Simulator(tk.Tk):
         self.fault_iac = tk.BooleanVar(value=False)
         self.fault_o2 = tk.BooleanVar(value=False)
         self.fault_inj = tk.BooleanVar(value=False)
+        
         # Physics State
         self.engine_temp_c = 35.0
         self.current_rpm = 0
@@ -83,7 +115,23 @@ class ECU_Simulator(tk.Tk):
         ttk.Checkbutton(fault_frame, text="TPS Sensor Missing (เซนเซอร์ปีกผีเสื้อหาย)", variable=self.fault_tps, command=self.check_engine_stall).pack(anchor=tk.W)
         ttk.Checkbutton(fault_frame, text="IAC Valve Fault (มอเตอร์เดินเบาพัง)", variable=self.fault_iac).pack(anchor=tk.W)
         ttk.Checkbutton(fault_frame, text="O2 Sensor Fault", variable=self.fault_o2).pack(anchor=tk.W)
-        ttk.Checkbutton(fault_frame, text="Injector Wiring Fault (สายหัวฉีดขาด)", variable=self.fault_inj, command=self.check_engine_stall).pack(anchor=tk.W)
+        ttk.Checkbutton(fault_frame, text="Force Security Lock (ปฏิเสธ Key 0x27)", variable=self.var_force_lock).pack(anchor=tk.W)
+
+        # --- Flash & Storage Tools ---
+        storage_frame = ttk.LabelFrame(main_frame, text="Flash Memory & Workspace", padding=10)
+        storage_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(storage_frame, text="📁 เปิดโฟลเดอร์รอมที่บันทึก (Open ROM Dumps)", command=self.open_storage_folder).pack(fill=tk.X)
+
+    def open_storage_folder(self):
+        try:
+            if sys.platform == 'win32':
+                os.startfile(self.storage_dir)
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', self.storage_dir])
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot open folder: {e}")
 
     def on_start_press(self, event):
         self.start_btn_pressed = True
@@ -382,8 +430,12 @@ class ECU_Simulator(tk.Tk):
                             
                         # Flashing: Transfer Exit 0x37
                         elif b'\x37' in data:
-                            out_path = os.path.join(self.storage_dir, "flashed_rom.bin")
-                            with open(out_path, "wb") as bf:
+                            t_stamp = time.strftime("%Y%m%d_%H%M%S")
+                            out_path_ts = os.path.join(self.storage_dir, f"flashed_rom_{t_stamp}.bin")
+                            out_path_latest = os.path.join(self.storage_dir, "flashed_rom.bin")
+                            with open(out_path_ts, "wb") as bf:
+                                bf.write(self.simulated_flash_buffer)
+                            with open(out_path_latest, "wb") as bf:
                                 bf.write(self.simulated_flash_buffer)
                             frame = bytearray([0x02, 3, 0x77, 0x77]) # Positive Response to 37
                             conn.sendall(frame)
