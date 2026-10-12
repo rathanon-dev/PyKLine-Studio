@@ -16,6 +16,7 @@ from tkinter import ttk, messagebox, filedialog
 
 from core.connection import scan_adapters
 from core.engine import HondaKLineEngine
+from core.paths import get_workspace_directory, get_sub_directory
 from database.dtc_codes import get_dtc_description
 
 
@@ -90,7 +91,26 @@ class PyKLineApp(tk.Tk):
 
         # Security Access Button
         self.sec_btn = tk.Button(top_frame, text="🔒 Security Access", font=("Segoe UI", 9), bg="#FFFFFF", relief="groove", command=self.on_security_access, padx=8)
-        self.sec_btn.pack(side=tk.RIGHT, padx=12, pady=8)
+        self.sec_btn.pack(side=tk.RIGHT, padx=(4, 12), pady=8)
+
+        # Open Workspace Folder Button
+        self.folder_btn = tk.Button(top_frame, text="📁 เปิดโฟลเดอร์ข้อมูล", font=("Segoe UI", 9), bg="#FFFFFF", relief="groove", command=self.open_workspace_folder, padx=8)
+        self.folder_btn.pack(side=tk.RIGHT, padx=4, pady=8)
+
+    def open_workspace_folder(self):
+        """Opens the portable companion data workspace in system file manager"""
+        folder = get_workspace_directory()
+        try:
+            if sys.platform == 'win32':
+                os.startfile(folder)
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.Popen(['open', folder])
+            else:
+                import subprocess
+                subprocess.Popen(['xdg-open', folder])
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถเปิดโฟลเดอร์ได้: {e}")
 
     # =========================================================================
     # 2. MAIN BODY & SIDEBAR
@@ -773,8 +793,7 @@ class PyKLineApp(tk.Tk):
 
     def _export_snapshot(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage")
-        os.makedirs(target_dir, exist_ok=True)
+        target_dir = get_sub_directory("data")
         file_path = os.path.join(target_dir, f"telemetry_snapshot_{timestamp}.txt")
 
         try:
