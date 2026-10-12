@@ -1,25 +1,34 @@
 # Python
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 *.env
+.venv/
 venv/
 env/
 
-# IDE
+# IDE & OS
 .vscode/
 .idea/
+Thumbs.db
+.DS_Store
+
+# PyInstaller & Build Artifacts (Keep local machine clean)
+build/
+dist/
+*.spec
 
 # Proprietary / Copyrighted Data (NEVER COMMIT)
 data/**/*.bin
 data/**/*.xdf
 *.log
 *.csv
+!database/tables_spec.csv
 *.jsonl
 
 # Analysis & Dumps
 analysis/
 storage/
 
-# Internal Project Notes
+# Internal Project Notes & Checklist
 CHECKLIST.*
