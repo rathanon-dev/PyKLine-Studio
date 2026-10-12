@@ -36,4 +36,4 @@ jobs:
 
       - name: Bytecode Syntax Compilation Check
         run: |
-          python -m compileall core database gui main.py
+          python -m compileall core database gui tools main.py

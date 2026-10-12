@@ -35,7 +35,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Standalone Executable (PyInstaller)
+      - name: Build Standalone Executables (PyInstaller)
         run: |
           pyinstaller --noconfirm --onefile --windowed `
             --name "PyKLine-Studio" `
@@ -43,6 +43,12 @@ jobs:
             --add-data "gui;gui" `
             --add-data "core;core" `
             main.py
+
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "PyKLine-Simulator" `
+            --add-data "database;database" `
+            --add-data "core;core" `
+            tools/ecu_gui_simulator.py
 
       - name: Package Assets & Calculate Checksums
         shell: pwsh
@@ -59,8 +65,8 @@ jobs:
             'v1.0.0' 
           }
           $zipName = "PyKLine-Studio_${tag}_Windows_x64.zip"
-          Compress-Archive -Path "dist/PyKLine-Studio.exe" -DestinationPath $zipName
-          Get-FileHash -Algorithm SHA256 $zipName, "dist/PyKLine-Studio.exe" | Format-Table -AutoSize | Out-File -FilePath checksums.txt
+          Compress-Archive -Path "dist/PyKLine-Studio.exe", "dist/PyKLine-Simulator.exe", "README.md" -DestinationPath $zipName
+          Get-FileHash -Algorithm SHA256 $zipName, "dist/PyKLine-Studio.exe", "dist/PyKLine-Simulator.exe" | Format-Table -AutoSize | Out-File -FilePath checksums.txt
           echo "RELEASE_ZIP=$zipName" >> $env:GITHUB_ENV
           echo "TAG_NAME=$tag" >> $env:GITHUB_ENV
 
@@ -72,6 +78,7 @@ jobs:
           files: |
             ${{ env.RELEASE_ZIP }}
             dist/PyKLine-Studio.exe
+            dist/PyKLine-Simulator.exe
             checksums.txt
           generate_release_notes: true
         env:

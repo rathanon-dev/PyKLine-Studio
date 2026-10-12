@@ -8,9 +8,13 @@ import sys
 import os
 
 def get_app_stem() -> str:
-    """Returns the executable name without extension (e.g. 'PyKLine-Studio')"""
+    """Returns the executable name without extension (e.g. 'PyKLine-Studio' or 'PyKLine-Simulator')"""
     if getattr(sys, 'frozen', False):
         return os.path.splitext(os.path.basename(sys.executable))[0]
+    if len(sys.argv) > 0 and sys.argv[0]:
+        stem = os.path.splitext(os.path.basename(sys.argv[0]))[0]
+        if "sim" in stem.lower():
+            return "PyKLine-Simulator"
     return "PyKLine-Studio"
 
 def get_base_directory() -> str:

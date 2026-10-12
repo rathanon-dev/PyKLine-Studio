@@ -56,9 +56,19 @@ def scan_adapters():
         except Exception:
             pass
 
-    # 3. Simulator (Safe TCP Bypass)
+    # 3. Simulator (Safe TCP Bypass & Local Auto-Detection)
     import os
-    if os.environ.get("PYKLINE_SIM") == "1" or os.environ.get("HONDAECU_SIM") == "1":
+    import socket
+    sim_enabled = os.environ.get("PYKLINE_SIM") == "1" or os.environ.get("HONDAECU_SIM") == "1"
+
+    if not sim_enabled:
+        try:
+            with socket.create_connection(("127.0.0.1", 9999), timeout=0.08):
+                sim_enabled = True
+        except Exception:
+            sim_enabled = False
+
+    if sim_enabled:
         adapters.append({
             'type': 'pyserial',
             'label': 'TEST SIMULATOR (127.0.0.1:9999)',
