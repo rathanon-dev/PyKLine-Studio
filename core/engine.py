@@ -29,6 +29,7 @@ from .protocol import (
     parse_table_d1,
     parse_table_20
 )
+from .paths import get_logs_directory, get_workspace_directory
 
 BAUD_RATE = 10400
 
@@ -107,18 +108,16 @@ class HondaKLineEngine(threading.Thread):
             # 3. Connected!
             self.status_cb("connected", f"เชื่อมต่อสำเร็จ 10,400 bps (ECU Active) - {self.device['sn'] or self.device['label']}")
 
-            # Initialize Background Logging Files
+            # Initialize Background Logging Files (Portable Companion Workspace)
             try:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                logs_dir = os.path.join(base_dir, "logs")
-                os.makedirs(logs_dir, exist_ok=True)
+                logs_dir = get_logs_directory()
                 
                 t_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self.log_filename = os.path.join(logs_dir, f"telemetry_{t_stamp}.csv")
                 self.jsonl_filename = os.path.join(logs_dir, "live_telemetry.jsonl")
                 
-                root_dir = os.path.dirname(base_dir)
-                self.root_jsonl_filename = os.path.join(root_dir, "ai_telemetry.jsonl")
+                workspace_dir = get_workspace_directory()
+                self.root_jsonl_filename = os.path.join(workspace_dir, "ai_telemetry.jsonl")
                 
                 # Write CSV header
                 headers = [
