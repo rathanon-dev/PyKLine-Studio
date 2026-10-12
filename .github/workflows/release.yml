@@ -10,6 +10,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'release-v*'
 
 permissions:
   contents: write
@@ -46,8 +48,11 @@ jobs:
         shell: pwsh
         run: |
           $inputTag = "${{ inputs.tag_name }}"
+          $refName = $env:GITHUB_REF_NAME
           $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { 
-            $env:GITHUB_REF_NAME 
+            $refName 
+          } elseif ($refName -match '^release-(v.+)$') {
+            $matches[1]
           } elseif ($inputTag -ne '') { 
             $inputTag 
           } else { 
@@ -61,7 +66,6 @@ jobs:
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: "Release ${{ env.TAG_NAME }}"
