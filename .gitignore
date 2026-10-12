@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.env
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Proprietary / Copyrighted Data (NEVER COMMIT)
+data/**/*.bin
+data/**/*.xdf
+*.log
+*.csv
+*.jsonl
+
+# Analysis & Dumps
+analysis/
+storage/
+
+# Internal Project Notes
+CHECKLIST.*
