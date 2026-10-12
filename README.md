@@ -87,21 +87,32 @@ PyKLine-Studio/
 
 ### 🚀 วิธีเริ่มต้นใช้งาน (Quick Start)
 
-#### 1. ติดตั้งไลบรารีที่จำเป็น
+#### 📦 1. ใช้งานแบบไฟล์เดี่ยว (Standalone Executable - ไม่ต้องติดตั้ง)
+ดาวน์โหลดไฟล์เวอร์ชันล่าสุดได้จาก [GitHub Releases](https://github.com/rathanon-dev/PyKLine-Studio/releases):
+* **`PyKLine-Studio.exe`**: หน้าต่างโปรแกรมหลักสำหรับอ่านค่าเซนเซอร์สด วิเคราะห์กราฟ และอ่านโค้ด DTC
+* **`PyKLine-Simulator.exe`**: ตัวจำลองกล่อง ECU จำลองฟิสิกส์เครื่องยนต์ คันเร่ง สวิตช์ขาตั้ง เซนเซอร์ DTC และคำสั่ง Flash Memory
+* **`PyKLine-Studio_vX.X.X_Windows_x64.zip`**: ชุดซิปรวมโปรแกรมทั้งสองตัว พร้อมเอกสารประกอบ
+
+> 💡 **โฟลเดอร์เก็บข้อมูลอัตโนมัติ (Portable Sibling Workspace):**
+> เมื่อเปิดใช้งานไฟล์ `.exe` ระบบจะสร้างโฟลเดอร์เก็บข้อมูลข้างเคียงตามชื่อไฟล์โดยอัตโนมัติ:
+> * `PyKLine-Studio_Data/` ➡️ เก็บข้อมูล telemetry, บันทึก CSV, JSONL (`logs/`, `data/`)
+> * `PyKLine-Simulator_Data/` ➡️ เก็บไฟล์รอมที่ถูกส่งแฟลชเข้ามา (`dumps/`)
+> สามารถกดปุ่ม **📁 เปิดโฟลเดอร์ข้อมูล** บนหน้าต่างโปรแกรมเพื่อเปิดดูไฟล์ใน Windows Explorer ได้ทันที
+
+#### 🐍 2. รันผ่านสภาพแวดล้อม Python (Developer Mode)
+1. ติดตั้งไลบรารีที่จำเป็น:
 ```bash
 pip install -r requirements.txt
 ```
-
-#### 2. เปิดใช้งานโปรแกรมหลัก
-ดับเบิลคลิกไฟล์ `start_main.bat` หรือสั่งผ่านคำสั่ง:
+2. เปิดใช้งานโปรแกรมหลัก:
 ```bash
 python main.py
+# หรือดับเบิลคลิก start_main.bat
 ```
-
-#### 3. เปิดใช้งานโหมดจำลองกล่อง (Offline Test)
-ดับเบิลคลิกไฟล์ `start_simulator.bat` หรือสั่ง:
+3. เปิดใช้งานตัวจำลองกล่อง ECU (ถ้าไม่มีรถหรือกล่องจริง):
 ```bash
 python tools/ecu_gui_simulator.py
+# หรือดับเบิลคลิก start_simulator.bat
 ```
 
 ---
@@ -222,21 +233,32 @@ The architecture of `PyKLine-Studio` is built upon the foundational work and res
 
 ### 🚀 Quick Start
 
-#### 1. Installation
+#### 📦 1. Standalone Executables (Zero Installation)
+Download pre-built Windows x64 binaries from [GitHub Releases](https://github.com/rathanon-dev/PyKLine-Studio/releases):
+* **`PyKLine-Studio.exe`**: Main diagnostic telemetry suite and cluster dashboard
+* **`PyKLine-Simulator.exe`**: Honda ECU physics, throttle, DTC, and flash memory emulator
+* **`PyKLine-Studio_vX.X.X_Windows_x64.zip`**: Complete portable bundle containing both applications
+
+> 💡 **Portable Sibling Workspace:**
+> Each executable automatically initializes a persistent companion workspace next to itself:
+> * `PyKLine-Studio_Data/` ➡️ Live telemetry recordings and datalogs (`logs/`, `data/`)
+> * `PyKLine-Simulator_Data/` ➡️ Flashed binary ROM archives (`dumps/`)
+> Click **📁 Open Data Folder** in the top bar to inspect files anytime.
+
+#### 🐍 2. Run from Source (Developer Mode)
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-
-#### 2. Launching Application
-Double-click `start_main.bat` or run:
+2. Run main application:
 ```bash
 python main.py
+# or double-click start_main.bat
 ```
-
-#### 3. Launching Simulator (Offline Mode)
-Double-click `start_simulator.bat` or run:
+3. Run ECU simulator:
 ```bash
 python tools/ecu_gui_simulator.py
+# or double-click start_simulator.bat
 ```
 
 ---
