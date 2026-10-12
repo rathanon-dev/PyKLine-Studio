@@ -214,7 +214,7 @@ class PyKLineApp(tk.Tk):
         aux_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         tk.Label(aux_box, text="คันเร่ง THROTTLE (TPS)", font=("Segoe UI", 9, "bold"), bg="#161B22", fg="#8B949E").pack(anchor="w", padx=12, pady=(10, 2))
-        self.hud_tps_val_lbl = tk.Label(aux_box, text="0.0 % (0.50 V)", font=("Segoe UI", 12, "bold"), bg="#161B22", fg="#58A6FF")
+        self.hud_tps_val_lbl = tk.Label(aux_box, text="0.0% (0.0°) | 0.50 V", font=("Segoe UI", 12, "bold"), bg="#161B22", fg="#58A6FF")
         self.hud_tps_val_lbl.pack(anchor="w", padx=12)
 
         # TPS Bar Canvas
@@ -291,15 +291,18 @@ class PyKLineApp(tk.Tk):
         cy = h / 2 + 10
         r = min(w, h) * 0.42
 
-        # Start from 140 deg to 400 deg (260 deg sweep)
-        start_ang = 140
+        # Gauge arc geometry:
+        # Tkinter arc angles measure counter-clockwise from 3 o'clock (0°).
+        # Bottom-left (0 RPM) is at 220° (screen angle 140°).
+        # Clockwise sweep towards bottom-right (max RPM) requires negative extent (-260°).
+        start_arc = 220
         sweep_ang = 260
         pct = max(0.0, min(1.0, rpm / max_scale if max_scale else 0))
 
         # Background track arc
-        c.create_arc(cx - r, cy - r, cx + r, cy + r, start=-40, extent=sweep_ang, style=tk.ARC, outline="#21262D", width=14)
+        c.create_arc(cx - r, cy - r, cx + r, cy + r, start=start_arc, extent=-sweep_ang, style=tk.ARC, outline="#21262D", width=14)
 
-        # Active fill arc with gradient colors
+        # Active fill arc with gradient colors (sweeping clockwise)
         fill_extent = int(pct * sweep_ang)
         if fill_extent > 0:
             if pct < 0.65:
@@ -308,12 +311,12 @@ class PyKLineApp(tk.Tk):
                 arc_color = "#D29922"  # Amber
             else:
                 arc_color = "#F85149"  # Red
-            c.create_arc(cx - r, cy - r, cx + r, cy + r, start=-40, extent=fill_extent, style=tk.ARC, outline=arc_color, width=14)
+            c.create_arc(cx - r, cy - r, cx + r, cy + r, start=start_arc, extent=-fill_extent, style=tk.ARC, outline=arc_color, width=14)
 
-        # Peak Hold Tick
+        # Peak Hold Tick (screen coordinates: 140° bottom-left sweeping clockwise +260°)
         if peak_val > 0 and peak_val <= max_scale:
             peak_pct = peak_val / max_scale
-            peak_ang = math.radians(start_ang + peak_pct * sweep_ang)
+            peak_ang = math.radians(140 + peak_pct * sweep_ang)
             px1 = cx + (r - 10) * math.cos(peak_ang)
             py1 = cy + (r - 10) * math.sin(peak_ang)
             px2 = cx + (r + 10) * math.cos(peak_ang)
@@ -337,21 +340,21 @@ class PyKLineApp(tk.Tk):
         cy = h / 2 + 10
         r = min(w, h) * 0.42
 
-        start_ang = 140
+        start_arc = 220
         sweep_ang = 260
         max_speed = 160
         pct = max(0.0, min(1.0, speed / max_speed))
 
         # Background track arc
-        c.create_arc(cx - r, cy - r, cx + r, cy + r, start=-40, extent=sweep_ang, style=tk.ARC, outline="#21262D", width=14)
+        c.create_arc(cx - r, cy - r, cx + r, cy + r, start=start_arc, extent=-sweep_ang, style=tk.ARC, outline="#21262D", width=14)
 
-        # Active speed arc
+        # Active speed arc (sweeping clockwise)
         fill_extent = int(pct * sweep_ang)
         if fill_extent > 0:
-            c.create_arc(cx - r, cy - r, cx + r, cy + r, start=-40, extent=fill_extent, style=tk.ARC, outline="#58A6FF", width=14)
+            c.create_arc(cx - r, cy - r, cx + r, cy + r, start=start_arc, extent=-fill_extent, style=tk.ARC, outline="#58A6FF", width=14)
 
         # Center Text Readouts
-        c.create_text(cx, cy - 14, text=str(speed), font=("Segoe UI", 26, "bold"), fill="#F0F6FC")
+        c.create_text(cx, cy - 14, text=str(int(speed)), font=("Segoe UI", 26, "bold"), fill="#F0F6FC")
         c.create_text(cx, cy + 18, text="KM/H", font=("Segoe UI", 10, "bold"), fill="#8B949E")
         c.create_text(cx, cy + 36, text="Vehicle Speed", font=("Segoe UI", 8), fill="#7EE787")
 
@@ -447,7 +450,8 @@ class PyKLineApp(tk.Tk):
         self.sensor_widgets = {}
         sensors = [
             ("rpm", "Engine speed:", "rpm"),
-            ("tps_pct", "TPS sensor:", "%"),
+            ("tps_pct", "TPS opening:", "%"),
+            ("tps_deg", "TPS angle:", "°"),
             ("tps_v", "TPS voltage:", "V"),
             ("ect", "ECT sensor:", "°C"),
             ("iat", "IAT sensor:", "°C"),
@@ -648,7 +652,10 @@ class PyKLineApp(tk.Tk):
         self._render_waveform()
 
         # Update Auxiliary Texts
-        self.hud_tps_val_lbl.configure(text=f"{tps_pct:.1f} % ({tps_v:.2f} V)")
+        tps_deg = data.get('tps_deg')
+        if tps_deg is None:
+            tps_deg = min(78.5, round(tps_pct * 0.785, 1))
+        self.hud_tps_val_lbl.configure(text=f"{tps_pct:.1f}% ({tps_deg:.1f}°) | {tps_v:.2f} V")
         bat_pct = max(0, min(100, int((bat - 10.5) / 3.0 * 100))) if bat > 0 else 0
         self.hud_bat_val_lbl.configure(text=f"{bat:.1f} V [ {bat_pct}% ]")
 
@@ -786,10 +793,23 @@ class PyKLineApp(tk.Tk):
 
     def on_security_access(self):
         if self.worker and getattr(self.worker, 'running', False):
-            self.worker.cmd_queue.put({'action': 'security_access'})
-            messagebox.showinfo("Security Access", "ส่งคำสั่ง PGM-FI Handshake ปลดล็อกกล่อง ECU เรียบร้อยแล้ว")
+            self.sec_btn.configure(state="disabled", text="⏳ Authenticating...")
+            self.worker.cmd_queue.put({
+                'action': 'security_access',
+                'callback': self._on_security_result
+            })
         else:
             messagebox.showinfo("Security Access", "กรุณาเชื่อมต่อกับกล่อง ECU ก่อนทำ Security Access")
+
+    def _on_security_result(self, success, message):
+        self.after(0, self._show_security_result_ui, success, message)
+
+    def _show_security_result_ui(self, success, message):
+        self.sec_btn.configure(state="normal", text="🔒 Security Access")
+        if success:
+            messagebox.showinfo("Security Access", f"✅ สำเร็จ:\n{message}")
+        else:
+            messagebox.showerror("Security Access", f"❌ การเข้าถึงถูกปฏิเสธ (Denied):\n{message}")
 
     def _export_snapshot(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

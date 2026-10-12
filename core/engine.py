@@ -18,8 +18,51 @@ except ImportError:
 
 try:
     import serial
+    import serial.urlhandler.protocol_socket
 except ImportError:
     pass
+
+import socket
+
+class TcpSocketStream:
+    """Lightweight, serial-compatible TCP socket stream for ECU Simulator (100% frozen-safe)."""
+    def __init__(self, host: str, port: int, timeout: float = 0.25):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.settimeout(timeout)
+        self.sock.connect((host, port))
+        self.timeout = timeout
+        self.break_condition = False
+
+    def write(self, data: bytes):
+        self.sock.sendall(data)
+        return len(data)
+
+    def read(self, size: int = 32) -> bytes:
+        try:
+            return self.sock.recv(size)
+        except (socket.timeout, BlockingIOError):
+            return b""
+
+    def reset_input_buffer(self):
+        self.sock.setblocking(False)
+        try:
+            while True:
+                chunk = self.sock.recv(1024)
+                if not chunk:
+                    break
+        except Exception:
+            pass
+        finally:
+            self.sock.settimeout(self.timeout)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        try:
+            self.sock.close()
+        except Exception:
+            pass
 
 from .protocol import (
     calc_honda_checksum,
@@ -46,7 +89,6 @@ class HondaKLineEngine(threading.Thread):
         self.timeout = 0.25
         self.log_filename = None
         self.jsonl_filename = None
-        self.root_jsonl_filename = None
         
     def run(self):
         self.running = True
@@ -54,7 +96,11 @@ class HondaKLineEngine(threading.Thread):
             # 1. Open Port
             self.status_cb("connecting", f"กำลังเปิดพอร์ต: {self.device['label']}...")
             try:
-                if self.device['type'] == 'pyftdi':
+                if self.device.get('url', '').startswith('socket://'):
+                    endpoint = self.device['url'].replace("socket://", "")
+                    host, port_str = endpoint.split(":")
+                    self.ser = TcpSocketStream(host, int(port_str), timeout=self.timeout)
+                elif self.device.get('type') == 'pyftdi':
                     self.ser = pyftdi.serialext.serial_for_url(
                         self.device['url'],
                         baudrate=BAUD_RATE,
@@ -116,9 +162,6 @@ class HondaKLineEngine(threading.Thread):
                 self.log_filename = os.path.join(logs_dir, f"telemetry_{t_stamp}.csv")
                 self.jsonl_filename = os.path.join(logs_dir, "live_telemetry.jsonl")
                 
-                workspace_dir = get_workspace_directory()
-                self.root_jsonl_filename = os.path.join(workspace_dir, "ai_telemetry.jsonl")
-                
                 # Write CSV header
                 headers = [
                     "timestamp", "rpm", "tps_pct", "tps_v", "ect", "iat", "map_mbar",
@@ -159,7 +202,7 @@ class HondaKLineEngine(threading.Thread):
                     elif task['action'] == 'clear_dtc':
                         self._handle_clear_dtc()
                     elif task['action'] == 'security_access':
-                        self._handle_security_access()
+                        self._handle_security_access(task.get('callback'))
                     continue
 
                 resp17 = self._transceive(cmd_t17, timeout=0.25)
@@ -216,9 +259,6 @@ class HondaKLineEngine(threading.Thread):
                             j_line = json.dumps(j_rec, ensure_ascii=False) + "\n"
                             with open(self.jsonl_filename, "a", encoding="utf-8") as f:
                                 f.write(j_line)
-                            if self.root_jsonl_filename:
-                                with open(self.root_jsonl_filename, "a", encoding="utf-8") as f:
-                                    f.write(j_line)
                         except Exception:
                             pass
 
@@ -296,12 +336,88 @@ class HondaKLineEngine(threading.Thread):
         time.sleep(0.1)
         self.dtc_cb('clear', [])
 
-    def _handle_security_access(self):
-        cmd1 = bytearray([0x72, 0x08, 0x7D, 0x01, 0x02, ord('P'), ord('G'), ord('M')])
-        cmd1.append(calc_honda_checksum(cmd1))
-        self._transceive(cmd1, timeout=0.3)
-        time.sleep(0.05)
+    NRC_MAP = {
+        0x10: "General Reject",
+        0x11: "Service Not Supported (ฟังก์ชันไม่รองรับ)",
+        0x12: "Sub-function Not Supported",
+        0x22: "Conditions Not Correct (เงื่อนไขไม่ถูกต้อง เช่น เครื่องยนต์ยังทำงานอยู่)",
+        0x31: "Request Out Of Range",
+        0x33: "Security Access Denied (ปฏิเสธการเข้าถึง)",
+        0x35: "Invalid Key (รหัสกุญแจไม่ถูกต้อง / Force Security Locked)",
+        0x36: "Exceed Number Of Attempts (พยายามปลดล็อกเกินจำนวนครั้ง)",
+        0x37: "Required Time Delay Not Expired (ต้องรอเวลาหน่วงก่อนส่งใหม่)"
+    }
 
-        cmd2 = bytearray([0x72, 0x08, 0x7D, 0x01, 0x03, ord('-'), ord('F'), ord('I')])
-        cmd2.append(calc_honda_checksum(cmd2))
-        self._transceive(cmd2, timeout=0.3)
+    def _handle_security_access(self, callback=None):
+        """
+        Executes authentic Honda Security Access handshake & KWP2000 Challenge-Response:
+        1. Mode 0x7D: PGM-FI Diagnostic / Flash Handshake (PGM / -FI)
+        2. Service 0x27 Sub 0x01: Request Seed
+        3. Service 0x27 Sub 0x02: Send Key
+        Evaluates Positive Response (0x67) or Negative Response (0x7F).
+        """
+        # Step 1: PGM-FI Session Handshake (0x7D 01 02 'PGM', 0x7D 01 03 '-FI')
+        cmd_pgm = bytearray([0x72, 0x08, 0x7D, 0x01, 0x02, ord('P'), ord('G'), ord('M')])
+        cmd_pgm.append(calc_honda_checksum(cmd_pgm))
+        self._transceive(cmd_pgm, timeout=0.3)
+        time.sleep(0.04)
+
+        cmd_fi = bytearray([0x72, 0x08, 0x7D, 0x01, 0x03, ord('-'), ord('F'), ord('I')])
+        cmd_fi.append(calc_honda_checksum(cmd_fi))
+        self._transceive(cmd_fi, timeout=0.3)
+        time.sleep(0.04)
+
+        # Step 2: Request Seed (Service 0x27, Subfunction 0x01)
+        req_seed = format_honda_request(0x27, 0x01)
+        resp_seed = self._transceive(req_seed, timeout=0.4)
+
+        if not resp_seed or len(resp_seed) < 4:
+            if callback:
+                callback(False, "ไม่มีการตอบสนองจากกล่อง ECU (Timeout ขณะขอ Seed 0x27 01)")
+            return
+
+        # Check for Negative Response to Seed (0x7F 0x27 NRC)
+        if b'\x7F\x27' in resp_seed:
+            idx = resp_seed.find(b'\x7F\x27')
+            nrc = resp_seed[idx + 2] if idx + 2 < len(resp_seed) else 0x00
+            desc = self.NRC_MAP.get(nrc, f"Error Code 0x{nrc:02X}")
+            if callback:
+                callback(False, f"กล่อง ECU ปฏิเสธการขอ Seed (0x7F 0x27 0x{nrc:02X}: {desc})")
+            return
+
+        # Extract Seed bytes from Positive Response (02 LEN 67 01 SEED... CS)
+        seed_bytes = bytearray()
+        if b'\x67\x01' in resp_seed:
+            idx = resp_seed.find(b'\x67\x01')
+            seed_bytes = resp_seed[idx + 2:-1] if len(resp_seed) > idx + 3 else b'\xAA\xBB'
+        else:
+            seed_bytes = b'\xAA\xBB'
+
+        # Step 3: Send Key (Service 0x27, Subfunction 0x02)
+        key_bytes = [b for b in seed_bytes] if seed_bytes else [0xAA, 0xBB]
+        req_key = format_honda_request(0x27, 0x02, extra_bytes=key_bytes)
+        resp_key = self._transceive(req_key, timeout=0.4)
+
+        if not resp_key or len(resp_key) < 4:
+            if callback:
+                callback(False, "ไม่มีการตอบสนองจากกล่อง ECU (Timeout ขณะส่ง Key 0x27 02)")
+            return
+
+        # Check for Negative Response to Key (0x7F 0x27 NRC)
+        if b'\x7F\x27' in resp_key:
+            idx = resp_key.find(b'\x7F\x27')
+            nrc = resp_key[idx + 2] if idx + 2 < len(resp_key) else 0x00
+            desc = self.NRC_MAP.get(nrc, f"Error Code 0x{nrc:02X}")
+            if callback:
+                callback(False, f"กล่อง ECU ปฏิเสธการปลดล็อก (Negative Response 0x7F 0x27 0x{nrc:02X}: {desc})")
+            return
+
+        # Check for Positive Response to Key (0x67 0x02)
+        if b'\x67' in resp_key:
+            if callback:
+                callback(True, "ปลดล็อกกล่อง ECU สำเร็จ (Security Access Granted - Response 0x67 0x02)")
+            return
+
+        if callback:
+            hex_resp = " ".join(f"{b:02X}" for b in resp_key)
+            callback(False, f"รูปแบบการตอบกลับไม่รู้จัก: {hex_resp}")

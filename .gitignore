@@ -32,3 +32,6 @@ storage/
 
 # Internal Project Notes & Checklist
 CHECKLIST.*
+*.local.md
+*.internal.md
+PROJECT_DNA.*

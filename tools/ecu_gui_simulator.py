@@ -66,6 +66,18 @@ class ECU_Simulator(tk.Tk):
         self.fault_o2 = tk.BooleanVar(value=False)
         self.fault_inj = tk.BooleanVar(value=False)
         
+        # Thread-safe Mirrored State (for background socket server thread)
+        self.state_engine_on = False
+        self.state_brake_left = False
+        self.state_stand_down = True
+        self.state_throttle_pct = 0.0
+        self.state_fault_ect = False
+        self.state_fault_tps = False
+        self.state_fault_iac = False
+        self.state_fault_o2 = False
+        self.state_fault_inj = False
+        self.state_force_lock = False
+        
         # Physics State
         self.engine_temp_c = 35.0
         self.current_rpm = 0
@@ -74,8 +86,25 @@ class ECU_Simulator(tk.Tk):
         self.ign_deg = -64.0
         
         self.build_ui()
+        self.sync_thread_state()
         self.start_server_thread()
         self.update_physics()
+
+    def sync_thread_state(self):
+        """Copies Tk UI control values into thread-safe primitive variables."""
+        try:
+            self.state_engine_on = bool(self.engine_on.get())
+            self.state_brake_left = bool(self.brake_left.get())
+            self.state_stand_down = bool(self.stand_down.get())
+            self.state_throttle_pct = float(self.throttle_pct.get())
+            self.state_fault_ect = bool(self.fault_ect.get())
+            self.state_fault_tps = bool(self.fault_tps.get())
+            self.state_fault_iac = bool(self.fault_iac.get())
+            self.state_fault_o2 = bool(self.fault_o2.get())
+            self.state_fault_inj = bool(self.fault_inj.get())
+            self.state_force_lock = bool(self.var_force_lock.get())
+        except Exception:
+            pass
         
     def build_ui(self):
         main_frame = ttk.Frame(self, padding=10)
@@ -103,7 +132,8 @@ class ECU_Simulator(tk.Tk):
         self.btn_start.bind("<ButtonRelease-1>", self.on_start_release)
         self.btn_start.pack(pady=10, fill=tk.X)
         
-        ttk.Label(ctrl_frame, text="Throttle (คันเร่ง):").pack(anchor=tk.W)
+        self.lbl_throttle = ttk.Label(ctrl_frame, text="Throttle (คันเร่ง): 0.0 % (0.0°)")
+        self.lbl_throttle.pack(anchor=tk.W)
         self.scale_throttle = ttk.Scale(ctrl_frame, from_=0, to=100, variable=self.throttle_pct, orient=tk.HORIZONTAL)
         self.scale_throttle.pack(fill=tk.X)
         
@@ -162,6 +192,7 @@ class ECU_Simulator(tk.Tk):
 
     def update_physics(self):
         # Physics Engine Update (called every 100ms)
+        self.sync_thread_state()
         dt_sec = 0.1
         
         # Engine Temp (ECT)
@@ -194,13 +225,16 @@ class ECU_Simulator(tk.Tk):
             self.current_rpm = int(rpm)
             self.lbl_status.config(text="ENGINE RUNNING", foreground="green")
 
-        # Vehicle Speed (Clutch engages ~3000 RPM)
-        if self.current_rpm > 3000 and self.engine_on.get():
-            # CVT ratio approx: 90km/h at 9500 RPM
-            target_speed = (self.current_rpm - 3000) * 0.0138
-            self.vehicle_speed = min(120.0, target_speed)
-        else:
+        # Vehicle Speed (Centrifugal clutch engages ~2200 RPM, CVT variator)
+        if not self.engine_on.get() or self.current_rpm < 2200:
             self.vehicle_speed = 0.0
+        elif self.current_rpm <= 3000:
+            # Smooth clutch bite: 0 to 18 km/h between 2200 and 3000 RPM
+            self.vehicle_speed = ((self.current_rpm - 2200) / 800.0) * 18.0
+        else:
+            # CVT variator ratio: 18 km/h at 3000 RPM up to 115 km/h at 9500 RPM
+            ratio_speed = 18.0 + ((self.current_rpm - 3000) / 6500.0) * 97.0
+            self.vehicle_speed = min(120.0, ratio_speed)
 
         # Injector Duration (ms)
         if not self.engine_on.get():
@@ -224,7 +258,10 @@ class ECU_Simulator(tk.Tk):
                 rpm_clamped = min(9000, self.current_rpm)
                 self.ign_deg = 15.0 + ((rpm_clamped - 2000) / 7000.0) * 20.0
 
-        self.lbl_rpm.config(text=f"RPM: {self.current_rpm}")
+        self.lbl_rpm.config(text=f"RPM: {self.current_rpm} | Speed: {int(self.vehicle_speed)} km/h")
+        thr_pct = self.throttle_pct.get()
+        thr_deg = min(78.5, thr_pct * 0.785)
+        self.lbl_throttle.config(text=f"Throttle (คันเร่ง): {thr_pct:.1f}% ({thr_deg:.1f}°)")
         
         if self.running:
             self.after(100, self.update_physics)
@@ -240,17 +277,19 @@ class ECU_Simulator(tk.Tk):
         b[0] = (rpm >> 8) & 0xFF
         b[1] = rpm & 0xFF
         
-        # TPS (b2, b3)
-        if self.fault_tps.get():
-            b[2] = 0
+        # TPS (b2, b3) - based on real Honda Click 125i / Lead 125 telemetry
+        if self.state_fault_tps:
+            b[2] = 255 # Open circuit floating to 5V (Triggers DTC 08-02 High Voltage)
             b[3] = 0
         else:
-            pct = self.throttle_pct.get()
-            b[2] = int(28 + (pct * 2.22)) # raw 28-250
-            b[3] = int(pct) # 0-100%
+            pct = self.state_throttle_pct
+            # b2: Raw ADC voltage (21 = 0.41V closed, 223 = 4.37V WOT)
+            # b3: ECU computed opening (0 = 0% / 0.0°, 160 = 100% / 80.0°)
+            b[2] = int(21 + (pct / 100.0) * 202)
+            b[3] = min(160, int(round(pct * 1.6)))
             
         # ECT (b8, b9)
-        if self.fault_ect.get():
+        if self.state_fault_ect:
             b[8] = 0xFF
             b[9] = 0xFF
         else:
@@ -262,10 +301,10 @@ class ECU_Simulator(tk.Tk):
         if self.start_btn_pressed:
             b[10] = 115 # 11.5V under crank load
         else:
-            b[10] = 142 if self.engine_on.get() else 125
+            b[10] = 142 if self.state_engine_on else 125
         
         # Injector (b11, b12) - scale 0.005 ms
-        if self.fault_inj.get() or not self.engine_on.get():
+        if self.state_fault_inj or not self.state_engine_on:
             b[11] = 0x01
             b[12] = 0xFF
         else:
@@ -278,10 +317,10 @@ class ECU_Simulator(tk.Tk):
         b[13] = max(0, min(255, ign_raw))
         
         # IACV (b14)
-        if self.fault_iac.get():
+        if self.state_fault_iac:
             b[14] = 0
         else:
-            b[14] = random.randint(103, 109) if self.engine_on.get() else 128
+            b[14] = random.randint(103, 109) if self.state_engine_on else 128
             
         # Vehicle Speed (b15) - km/h
         b[15] = int(self.vehicle_speed)
@@ -293,15 +332,14 @@ class ECU_Simulator(tk.Tk):
         # 5 bytes
         b = bytearray(5)
         
-        # Byte 0 flags: 0x02 = Stand DOWN (inverted?), 0x20 = Start Interlock (brake+start)
-        # Wait, tables.py says: bit set = stand DOWN for mask 0x02 (invert=True means the GUI inverts it? No, if inverted in GUI, the bit 1 = stand down physically)
-        if self.stand_down.get():
+        # Byte 0 flags: 0x02 = Stand DOWN, 0x20 = Start Interlock (brake+start)
+        if self.state_stand_down:
             b[0] |= 0x02
-        if self.start_btn_pressed and self.brake_left.get():
+        if self.start_btn_pressed and self.state_brake_left:
             b[0] |= 0x20
             
         # Byte 4 flags: 0x01 = Engine running
-        if self.engine_on.get():
+        if self.state_engine_on:
             b[4] |= 0x01
             
         b[1] = 0x01
@@ -311,11 +349,11 @@ class ECU_Simulator(tk.Tk):
         
     def get_dtcs(self, packet_idx):
         codes = []
-        if self.fault_ect.get(): codes.extend([7, 1]) # ECT code 7-1
-        if self.fault_tps.get(): codes.extend([8, 1]) # TPS code 8-1
-        if self.fault_iac.get(): codes.extend([29, 1]) # IAC code 29-1
-        if self.fault_o2.get(): codes.extend([21, 1]) # O2 code 21-1
-        if self.fault_inj.get(): codes.extend([12, 1]) # INJ code 12-1
+        if self.state_fault_ect: codes.extend([7, 2]) # ECT code 7-2 (Disconnected / High voltage)
+        if self.state_fault_tps: codes.extend([8, 2]) # TPS code 8-2 (Disconnected / High voltage)
+        if self.state_fault_iac: codes.extend([29, 1]) # IAC code 29-1
+        if self.state_fault_o2: codes.extend([21, 1]) # O2 code 21-1
+        if self.state_fault_inj: codes.extend([12, 1]) # INJ code 12-1
         
         # Honda puts up to 3 codes per packet (6 bytes max)
         start_idx = (packet_idx - 1) * 6
@@ -333,7 +371,7 @@ class ECU_Simulator(tk.Tk):
     def get_table_20(self):
         # 3 bytes: o2_v, stft, o2_heater
         b = bytearray(3)
-        if self.engine_on.get() and not self.fault_o2.get():
+        if self.state_engine_on and not self.state_fault_o2:
             # simulate 0.1V - 0.9V sweep (scale 5/255) -> 5 to 45 raw
             b[0] = random.randint(10, 40)
             b[1] = 128 # STFT ~ 1.0
@@ -386,26 +424,25 @@ class ECU_Simulator(tk.Tk):
                             conn.sendall(b'\x02\x04\x7D\x80')  # Dummy ACK
                             
                         # Flashing: Security Access (Request Seed)
-                        if (b'\x27\xE0' in data or b'\x27\x01' in data) and len(data) <= 6:
-                            # Send Dummy Seed (Length depends on Old vs New ECU)
+                        if (b'\x27\x01' in data or (b'\x27\xE0' in data and len(data) <= 6)):
                             mode = data[data.find(b'\x27')+1]
                             seed = b'\xAA\xBB\xCC\xDD\xEE\xFF\x11' if mode == 0xE0 else b'\xAA\xBB'
-                            frame = bytearray([0x02, 4 + len(seed), 0x67, mode]) + seed
+                            frame = bytearray([0x02, 5 + len(seed), 0x67, mode]) + seed
                             frame.append(calc_honda_checksum(frame))
                             conn.sendall(frame)
                             
                         # Flashing: Security Access (Send Key) 
-                        elif (b'\x27\xE0' in data or b'\x27\x02' in data) and len(data) > 6:
+                        elif (b'\x27\x02' in data or (b'\x27\xE0' in data and len(data) > 6)):
                             mode = data[data.find(b'\x27')+1]
                             
-                            if self.var_force_lock.get():
+                            if self.state_force_lock:
                                 # 7F 27 35 (Negative Response, Service 27, Error 35: Invalid Key)
-                                frame = bytearray([0x02, 5, 0x7F, 0x27, 0x35])
+                                frame = bytearray([0x02, 6, 0x7F, 0x27, 0x35])
                                 frame.append(calc_honda_checksum(frame))
                                 conn.sendall(frame)
                             else:
                                 # Success (67 02)
-                                frame = bytearray([0x02, 4, 0x67, mode])
+                                frame = bytearray([0x02, 5, 0x67, mode])
                                 frame.append(calc_honda_checksum(frame))
                                 conn.sendall(frame)
                             
