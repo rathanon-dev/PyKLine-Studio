@@ -39,6 +39,14 @@ jobs:
         run: |
           pyinstaller --noconfirm --onefile --windowed `
             --name "PyKLine-Studio" `
+            --hidden-import "libusb_package" `
+            --hidden-import "usb.backend.libusb1" `
+            --hidden-import "usb.backend.libusb0" `
+            --hidden-import "pyftdi" `
+            --hidden-import "pyftdi.serialext" `
+            --hidden-import "ftd2xx" `
+            --collect-all "libusb_package" `
+            --collect-all "pyftdi" `
             --add-data "database;database" `
             --add-data "gui;gui" `
             --add-data "core;core" `
