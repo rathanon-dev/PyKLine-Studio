@@ -64,6 +64,55 @@ class TcpSocketStream:
         except Exception:
             pass
 
+
+class Ftd2xxStream:
+    """Wrapper around ftd2xx device to provide a pyserial-compatible interface."""
+    def __init__(self, device_index=0, baudrate=10400, timeout=0.25):
+        import ftd2xx
+        import ftd2xx.defines as defines
+        self.dev = ftd2xx.open(int(device_index))
+        self.dev.setBaudRate(baudrate)
+        self.dev.setDataCharacteristics(defines.BITS_8, defines.STOP_BITS_1, defines.PARITY_NONE)
+        timeout_ms = int(timeout * 1000)
+        self.dev.setTimeouts(timeout_ms, timeout_ms)
+        self.dev.purge(defines.PURGE_RX | defines.PURGE_TX)
+        self._break_condition = False
+
+    @property
+    def break_condition(self):
+        return self._break_condition
+
+    @break_condition.setter
+    def break_condition(self, value):
+        self._break_condition = bool(value)
+        if self._break_condition:
+            self.dev.setBreakOn()
+        else:
+            self.dev.setBreakOff()
+
+    def write(self, data: bytes):
+        return self.dev.write(data)
+
+    def read(self, size: int = 1) -> bytes:
+        return self.dev.read(size)
+
+    def reset_input_buffer(self):
+        import ftd2xx.defines as defines
+        self.dev.purge(defines.PURGE_RX)
+
+    def reset_output_buffer(self):
+        import ftd2xx.defines as defines
+        self.dev.purge(defines.PURGE_TX)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        try:
+            self.dev.close()
+        except Exception:
+            pass
+
 from .protocol import (
     calc_honda_checksum,
     format_honda_request,
@@ -100,6 +149,9 @@ class HondaKLineEngine(threading.Thread):
                     endpoint = self.device['url'].replace("socket://", "")
                     host, port_str = endpoint.split(":")
                     self.ser = TcpSocketStream(host, int(port_str), timeout=self.timeout)
+                elif self.device.get('type') == 'ftd2xx':
+                    idx = self.device.get('index', 0)
+                    self.ser = Ftd2xxStream(device_index=idx, baudrate=BAUD_RATE, timeout=self.timeout)
                 elif self.device.get('type') == 'pyftdi':
                     self.ser = pyftdi.serialext.serial_for_url(
                         self.device['url'],
