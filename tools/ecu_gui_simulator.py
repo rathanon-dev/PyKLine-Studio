@@ -39,7 +39,7 @@ def calc_honda_checksum(data):
 class ECU_Simulator(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PyKLine Simulator - Honda ECU Physics & Flash Emulator")
+        self.title("PyKLine Simulator v1.0.2 - Honda ECU Physics & Flash Emulator")
         self.geometry("520x720")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         

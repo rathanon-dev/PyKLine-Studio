@@ -7,3 +7,5 @@ from .protocol import (
     parse_table_d1
 )
 from .engine import HondaKLineEngine
+
+__version__ = "1.0.2"

@@ -35,6 +35,10 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Run Unit Tests
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+
       - name: Build Standalone Executables (PyInstaller)
         run: |
           pyinstaller --noconfirm --onefile --windowed `

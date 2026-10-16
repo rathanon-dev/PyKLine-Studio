@@ -35,3 +35,7 @@ CHECKLIST.*
 *.local.md
 *.internal.md
 PROJECT_DNA.*
+
+# Release assets
+*.zip
+checksums.txt

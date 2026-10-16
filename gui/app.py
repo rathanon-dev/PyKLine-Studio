@@ -19,11 +19,13 @@ from core.engine import HondaKLineEngine
 from core.paths import get_workspace_directory, get_sub_directory
 from database.dtc_codes import get_dtc_description
 
+__version__ = "1.0.2"
+
 
 class PyKLineApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PyKLine Studio - Universal K-Line Telemetry & Diagnostic Suite")
+        self.title(f"PyKLine Studio v{__version__} - Universal K-Line Telemetry & Diagnostic Suite")
         self.geometry("1140x760")
         self.minsize(980, 680)
         self.configure(bg="#F0F2F5")
@@ -99,7 +101,7 @@ class PyKLineApp(tk.Tk):
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
         # Brand Logo
-        brand_label = tk.Label(top_frame, text="⚡ PyKLine Studio", font=("Segoe UI", 12, "bold"), bg="#E9ECEF", fg="#0B5ED7")
+        brand_label = tk.Label(top_frame, text=f"⚡ PyKLine Studio v{__version__}", font=("Segoe UI", 12, "bold"), bg="#E9ECEF", fg="#0B5ED7")
         brand_label.pack(side=tk.LEFT, padx=(14, 18), pady=8)
 
         # Device Selector
