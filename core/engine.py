@@ -269,6 +269,9 @@ class HondaKLineEngine(threading.Thread):
         cmd_t17 = format_honda_request(0x71, 0x17)
         cmd_td1 = format_honda_request(0x71, 0xD1)
         cmd_t20 = format_honda_request(0x71, 0x20)
+        t20_supported = True
+        t20_fail_count = 0
+        loop_counter = 0
 
         while self.running:
             # 1. Ensure Port is Open
@@ -383,11 +386,23 @@ class HondaKLineEngine(threading.Thread):
                         f"เชื่อมต่อสำเร็จ 10,400 bps (กู้คืนสัญญาณ ECU อัตโนมัติแล้ว)"
                     )
 
-                resp_d1 = self._transceive(cmd_td1, timeout=0.12)
+                loop_counter += 1
+                resp_d1 = self._transceive(cmd_td1, timeout=0.10)
                 parsed_d1 = parse_table_d1(resp_d1)
 
-                resp_20 = self._transceive(cmd_t20, timeout=0.12)
-                parsed_20 = parse_table_20(resp_20)
+                parsed_20 = None
+                # Optimize for DIY PC817 circuits: Click 125i does not support Table 0x20.
+                # Don't waste 120ms timeout every cycle if unsupported; test only every 30 cycles.
+                if t20_supported or (loop_counter % 30 == 0):
+                    resp_20 = self._transceive(cmd_t20, timeout=0.08)
+                    parsed_20 = parse_table_20(resp_20)
+                    if parsed_20:
+                        t20_supported = True
+                        t20_fail_count = 0
+                    else:
+                        t20_fail_count += 1
+                        if t20_fail_count >= 3:
+                            t20_supported = False
 
                 if parsed_d1:
                     parsed17.update(parsed_d1)
@@ -452,7 +467,7 @@ class HondaKLineEngine(threading.Thread):
                         pass
 
                 self.data_cb(parsed17)
-                time.sleep(0.015)
+                time.sleep(0.005)
 
         self._close_port()
 
@@ -471,17 +486,34 @@ class HondaKLineEngine(threading.Thread):
             buf = bytearray()
             start_t = time.time()
             last_rx_t = time.time()
+            echo_len = len(packet)
 
             while (time.time() - start_t) < timeout and self.running:
                 b = self.ser.read(32)
                 if b:
                     buf += b
                     last_rx_t = time.time()
-                elif len(buf) > 0 and (time.time() - last_rx_t) > 0.014:
+                    # Fast-path frame completion check for half-duplex K-Line echo + Honda response
+                    if len(buf) > echo_len:
+                        rem = buf[echo_len:]
+                        if len(rem) >= 5 and rem[0] == 0x02:
+                            flen = rem[1]
+                            if 5 <= flen <= 64 and len(rem) >= flen:
+                                candidate = rem[:flen]
+                                if calc_honda_checksum(candidate[:-1]) == candidate[-1]:
+                                    return bytes(candidate)
+                    elif len(buf) >= 5:
+                        for idx in range(len(buf) - 4):
+                            if buf[idx] == 0x02:
+                                flen = buf[idx + 1]
+                                if 5 <= flen <= 64 and len(buf) >= idx + flen:
+                                    candidate = buf[idx:idx + flen]
+                                    if calc_honda_checksum(candidate[:-1]) == candidate[-1]:
+                                        return bytes(candidate)
+                elif len(buf) > 0 and (time.time() - last_rx_t) > 0.012:
                     break
-                time.sleep(0.002)
+                time.sleep(0.001)
 
-            echo_len = len(packet)
             if len(buf) >= echo_len and buf[:echo_len] == packet:
                 return bytes(buf[echo_len:])
             return bytes(buf)

@@ -63,6 +63,15 @@ class PyKLineApp(tk.Tk):
             self.history_ect.append(0)
             self.history_valid.append(True)
 
+        # Anti-Jitter / EMA Smoothing for DIY PC817 interface
+        self.anti_jitter_filter = True
+        self.smooth_rpm = None
+        self.smooth_tps = None
+        self.smooth_ect = None
+        self.smooth_inj = None
+        self.needle_rpm = 0.0
+        self.needle_speed = 0.0
+
         # Style & Layout
         self._setup_styles()
         self._build_top_bar()
@@ -359,8 +368,9 @@ class PyKLineApp(tk.Tk):
 
     def _ui_heartbeat_tick(self):
         """
-        Continuous 4 Hz UI timer that keeps the session clock ticking,
-        scrolls the waveform during dropouts, and animates connection alerts.
+        Continuous UI timer (100ms) that keeps session clock ticking,
+        smoothly animates gauge needles, scrolls waveform during genuine dropouts,
+        and animates connection alerts.
         """
         self.pulse_toggle = not self.pulse_toggle
         now = time.time()
@@ -373,18 +383,41 @@ class PyKLineApp(tk.Tk):
             ss = elapsed % 60
             self.hud_timer_lbl.configure(text=f"⏱️ เวลาบันทึก: {hh:02d}:{mm:02d}:{ss:02d}", fg="#3FB950" if self.ecu_online else "#D29922")
 
-            # If no packet arrived in the last 0.65s while session is active, push a NULL sample to keep waveform scrolling
-            if (now - self.last_rx_ts) > 0.65:
+            # Only consider connection lost if no packet has arrived for > 2.5 seconds!
+            # Normal PC817 polling cycles (0.3s - 1.2s) are healthy and must NOT insert NULLs.
+            if (now - self.last_rx_ts) > 2.5:
+                if self.ecu_online:
+                    self.ecu_online = False
+                    self.hud_model_lbl.configure(
+                        text="⚠️ ECU: สัญญาณขาดหาย / ปิดกุญแจหรือสายหลวม (กำลังยิง Wakeup อัตโนมัติ...)",
+                        fg="#FF7B72"
+                    )
+                # Scroll waveform with NULL while disconnected
                 self.history_rpm.append(0)
                 self.history_tps.append(0.0)
                 self.history_ect.append(self.current_ect or 0)
                 self.history_valid.append(False)
 
-        self._render_tachometer(self.current_rpm, self.auto_rpm_scale, self.peak_rpm)
-        self._render_speedometer(self.current_speed)
+        # Smooth needle motion toward target
+        if self.current_rpm is not None:
+            target_rpm = float(self.current_rpm)
+            self.needle_rpm += (target_rpm - self.needle_rpm) * 0.40
+            disp_needle_rpm = int(round(self.needle_rpm))
+        else:
+            disp_needle_rpm = None
+
+        if self.current_speed is not None:
+            target_speed = float(self.current_speed)
+            self.needle_speed += (target_speed - self.needle_speed) * 0.40
+            disp_needle_speed = int(round(self.needle_speed))
+        else:
+            disp_needle_speed = None
+
+        self._render_tachometer(disp_needle_rpm, self.auto_rpm_scale, self.peak_rpm)
+        self._render_speedometer(disp_needle_speed)
         self._render_waveform()
 
-        self.after(250, self._ui_heartbeat_tick)
+        self.after(100, self._ui_heartbeat_tick)
 
     # =========================================================================
     # 4. GAUGE RENDERING MATH (CANVAS VECTOR CLUSTER)
@@ -524,9 +557,9 @@ class PyKLineApp(tk.Tk):
             dx = w / (count - 1)
             rpm_scale = self.auto_rpm_scale if self.auto_rpm_scale else 3000
 
-            # 1. Shade NULL / Dropout intervals in dark red so user sees exact dropout history
+            # 1. Shade NULL / Dropout intervals in dark red only during actual sustained dropouts
             for i in range(count - 1):
-                if not self.history_valid[i] or not self.history_valid[i + 1]:
+                if not self.history_valid[i] and not self.history_valid[i + 1]:
                     x1 = i * dx
                     x2 = (i + 1) * dx
                     c.create_rectangle(x1, 0, x2 + 1, h, fill="#2D1215", outline="")
@@ -569,13 +602,16 @@ class PyKLineApp(tk.Tk):
 
             # Live numerical overlay in top-left of waveform when online
             if self.ecu_online and self.current_rpm is not None:
+                filter_badge = "  |  🛡️ Anti-Jitter (PC817): ON" if self.anti_jitter_filter else ""
                 live_summary = (
                     f"LIVE ▶  RPM: {self.current_rpm:,}  |  "
                     f"TPS: {self.current_tps or 0.0:.1f}%  |  "
                     f"ECT: {self.current_ect if self.current_ect is not None else '---'} °C  |  "
                     f"INJ: {self.current_inj if self.current_inj is not None else 0.0:.2f} ms"
+                    f"{filter_badge}"
                 )
-                c.create_rectangle(8, 6, 460, 26, fill="#161B22", outline="#30363D")
+                box_w = 690 if self.anti_jitter_filter else 460
+                c.create_rectangle(8, 6, box_w, 26, fill="#161B22", outline="#30363D")
                 c.create_text(16, 16, text=live_summary, anchor="w", font=("Consolas", 9, "bold"), fill="#7EE787")
 
         # 3. Center Overlay Banner for NO DATA (Disconnected) or ECU LOST / WAKEUP RETRY
@@ -776,6 +812,24 @@ class PyKLineApp(tk.Tk):
         tk.Checkbutton(opt_frame, text="Auto-Detect Model & ECM ID upon connection", bg="#FFFFFF").pack(anchor="w", pady=2)
         tk.Checkbutton(opt_frame, text="Save Telemetry Session Logs into storage/ (รวมถึงการบันทึกค่า NULL ตอนสัญญาณหลุด)", bg="#FFFFFF").pack(anchor="w", pady=2)
 
+        def _toggle_anti_jitter():
+            self.anti_jitter_filter = bool(self.filter_var.get())
+            if not self.anti_jitter_filter:
+                self.smooth_rpm = None
+                self.smooth_tps = None
+                self.smooth_ect = None
+
+        self.filter_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            opt_frame,
+            text="🛡️ เปิดโหมด Anti-Jitter & EMA Smoothing (กรองสัญญาณนิ่ง ลดอาการกระตุกจากวงจร DIY PC817)",
+            variable=self.filter_var,
+            command=_toggle_anti_jitter,
+            bg="#FFFFFF",
+            font=("Segoe UI", 9, "bold"),
+            fg="#0969DA"
+        ).pack(anchor="w", pady=4)
+
         lbl = tk.Label(opt_frame, text="Baud Rate: 10,400 Baud (Fixed standard K-Line | Auto Fast-Init 70ms Re-Wakeup)", font=("Segoe UI", 9, "bold"), bg="#FFFFFF", fg="#495057")
         lbl.pack(anchor="w", pady=6)
 
@@ -894,13 +948,56 @@ class PyKLineApp(tk.Tk):
             self.fps_label.configure(text=f"Rate: {data['fps']} Hz")
 
         # 2. Update Visual Cluster Widgets (Page 1)
-        rpm = data.get('rpm', 0) or 0
-        speed = data.get('speed', 0) or 0
-        tps_pct = data.get('tps_pct', 0.0) or 0.0
+        raw_rpm = data.get('rpm', 0) or 0
+        raw_speed = data.get('speed', 0) or 0
+        raw_tps = data.get('tps_pct', 0.0) or 0.0
         tps_v = data.get('tps_v', 0.5) or 0.5
         bat = data.get('battery', 0.0) or 0.0
-        ect = data.get('ect')
-        inj = data.get('inj_ms')
+        raw_ect = data.get('ect')
+        raw_inj = data.get('inj_ms')
+
+        if self.anti_jitter_filter:
+            # Smooth RPM (alpha=0.35) - absorbs single-cylinder pulse flicker and PC817 rise-delay noise
+            if self.smooth_rpm is None:
+                self.smooth_rpm = float(raw_rpm)
+            else:
+                self.smooth_rpm = (0.35 * raw_rpm) + (0.65 * self.smooth_rpm)
+            rpm = int(round(self.smooth_rpm))
+
+            # TPS snap-to-zero deadband (below 0.6% snaps to 0.0% to prevent PC817 analog drift)
+            clean_tps = 0.0 if raw_tps < 0.6 else raw_tps
+            if self.smooth_tps is None:
+                self.smooth_tps = float(clean_tps)
+            else:
+                self.smooth_tps = (0.45 * clean_tps) + (0.55 * self.smooth_tps)
+            tps_pct = round(self.smooth_tps, 1)
+
+            # Smooth ECT (alpha=0.20) - prevents step jumps
+            if raw_ect is not None:
+                if self.smooth_ect is None:
+                    self.smooth_ect = float(raw_ect)
+                else:
+                    self.smooth_ect = (0.20 * raw_ect) + (0.80 * self.smooth_ect)
+                ect = int(round(self.smooth_ect))
+            else:
+                ect = None
+
+            # Smooth INJ (alpha=0.35)
+            if raw_inj is not None:
+                if self.smooth_inj is None:
+                    self.smooth_inj = float(raw_inj)
+                else:
+                    self.smooth_inj = (0.35 * raw_inj) + (0.65 * self.smooth_inj)
+                inj = round(self.smooth_inj, 2)
+            else:
+                inj = None
+            speed = raw_speed
+        else:
+            rpm = raw_rpm
+            speed = raw_speed
+            tps_pct = raw_tps
+            ect = raw_ect
+            inj = raw_inj
 
         self.current_rpm = rpm
         self.current_speed = speed
