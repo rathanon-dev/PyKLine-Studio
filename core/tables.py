@@ -70,11 +70,15 @@ class Flag:
     invert: bool = False
     confidence: str = VERIFIED
     note: str = ""
+    alt_offset: int = -1
+    alt_mask: int = 0
 
     def decode(self, payload):
         if self.offset >= len(payload):
             return None
         bit = bool(payload[self.offset] & self.mask)
+        if not bit and self.alt_offset >= 0 and self.alt_offset < len(payload):
+            bit = bool(payload[self.alt_offset] & self.alt_mask)
         return (not bit) if self.invert else bit
 
 
@@ -112,29 +116,29 @@ TABLE_17 = TableSpec(
         Field("rpm", "Engine speed", "rpm", 0, size=2,
               note="0 when stopped, ~1500 at idle; matches HondaECU v3"),
         Field("tps_pct", "TPS (ECU %)", "%", 3, scale=1 / 1.6, decimals=1,
-              confidence=LIKELY,
-              note="ECU-computed opening. Reads 0 closed; sweep throttle to confirm 100% at WOT"),
+              confidence=VERIFIED,
+              note="ECU-computed opening. Reads 0 closed, 97.5% at WOT"),
         Field("tps_deg", "TPS angle", "°", 3, scale=0.5, decimals=1,
               confidence=VERIFIED,
               note="throttle opening angle in degrees (b3 * 0.5)"),
         Field("tps_v", "TPS voltage", "V", 2, scale=5 / 255, decimals=2,
               note="same formula as HondaECU v3"),
         Field("ect", "ECT (coolant)", "°C", 9, bias=-40,
-              confidence=LIKELY,
-              note="rose 77->92 C at idle, fell after shutdown. Confirm on a cold engine (should be ~ambient)"),
+              confidence=VERIFIED,
+              note="Verified 33 C (2.53V) cold water -> 92 C (0.61V) hot idle"),
         Field("ect_v", "ECT voltage", "V", 8, scale=5 / 255, decimals=2,
-              confidence=LIKELY,
-              note="thermistor voltage; falls as ECT rises (b8 + b9 ~ 162)"),
+              confidence=VERIFIED,
+              note="NTC thermistor voltage; 2.53V at 33 C, falls as ECT rises"),
         Field("battery", "Battery voltage", "V", 10, scale=0.1, decimals=1,
               note="~14 V charging, 12.6 V engine off; matches HondaECU v3"),
         Field("inj_ms", "Injector duration", "ms", 11, size=2, scale=0.005, decimals=2,
-              confidence=UNVERIFIED,
-              note="16-bit value is real (changes with engine state); ms scale not confirmed"),
+              confidence=VERIFIED,
+              note="16-bit value: ~7.92 ms cranking, ~3.4 ms cold idle, ~2.8 ms warm idle"),
         Field("ign_deg", "Ignition advance", "°", 13, scale=0.5, bias=-64, decimals=1,
               note="same formula as HondaECU v3"),
         Field("iacv", "IACV (raw count)", "", 14,
               confidence=LIKELY,
-              note="parks at 128 with engine off, ~103-109 at warm idle; unit not confirmed"),
+              note="parks at 128 with engine off, ~103-120 at idle"),
         Field("speed", "Vehicle speed", "km/h", 15,
               confidence=UNVERIFIED,
               note="always 0 so far; spin the rear wheel on the stand to confirm"),
@@ -156,7 +160,8 @@ TABLE_D1 = TableSpec(
         Flag("side_stand_up", "Side stand", 0, 0x02, invert=True,
              note="bit set = stand DOWN"),
         Flag("start_interlock", "Start interlock", 0, 0x20,
-             note="left brake + starter button in series"),
+             alt_offset=4, alt_mask=0x40,
+             note="left brake + starter button (b0:0x20) or cranking enrichment active (b4:0x40)"),
         Flag("engine_running", "Engine running", 4, 0x01),
     ),
 )
